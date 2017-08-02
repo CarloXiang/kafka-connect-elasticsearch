@@ -16,6 +16,12 @@
 
 package io.confluent.connect.elasticsearch;
 
+import io.confluent.connect.elasticsearch.bulk.BulkProcessor;
+import io.searchbox.action.Action;
+import io.searchbox.client.JestClient;
+import io.searchbox.client.JestResult;
+import io.searchbox.indices.CreateIndex;
+import io.searchbox.indices.IndicesExists;
 import org.apache.kafka.common.utils.SystemTime;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -29,13 +35,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-
-import io.confluent.connect.elasticsearch.bulk.BulkProcessor;
-import io.searchbox.action.Action;
-import io.searchbox.client.JestClient;
-import io.searchbox.client.JestResult;
-import io.searchbox.indices.CreateIndex;
-import io.searchbox.indices.IndicesExists;
 
 public class ElasticsearchWriter {
   private static final Logger log = LoggerFactory.getLogger(ElasticsearchWriter.class);
@@ -232,6 +231,7 @@ public class ElasticsearchWriter {
   }
 
   private boolean indexExists(String index) {
+    log.info("check index exists for index[" + index + "]");
     Action action = new IndicesExists.Builder(index).build();
     try {
       JestResult result = client.execute(action);
@@ -244,10 +244,12 @@ public class ElasticsearchWriter {
   public void createIndicesForTopics(Set<String> assignedTopics) {
     for (String index : indicesForTopics(assignedTopics)) {
       if (!indexExists(index)) {
+        log.info("try to create index: " + index);
         CreateIndex createIndex = new CreateIndex.Builder(index).build();
         try {
           JestResult result = client.execute(createIndex);
           if (!result.isSucceeded()) {
+            log.error("failed to create index[" + index + "]");
             throw new ConnectException("Could not create index:" + index);
           }
         } catch (IOException e) {
