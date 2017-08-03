@@ -41,6 +41,9 @@ public class ElasticsearchSinkConnectorConfig extends AbstractConfig {
   public static final String SCHEMA_IGNORE_CONFIG = "schema.ignore";
   public static final String TOPIC_SCHEMA_IGNORE_CONFIG = "topic.schema.ignore";
 
+  public static final String VERSION_FIELD_CONFIG = "version.field";
+  public static final String VERSION_TYPE_CONFIG = "version.type";
+
   protected static ConfigDef baseConfigDef() {
     final ConfigDef configDef = new ConfigDef();
 
@@ -95,6 +98,12 @@ public class ElasticsearchSinkConnectorConfig extends AbstractConfig {
                   + "When this is set to ``true``, document IDs will be generated as the record's ``topic+partition+offset``.\n"
                   + "Note that this is a global config that applies to all topics, use ``" + TOPIC_KEY_IGNORE_CONFIG + "`` to override as ``true`` for specific topics.",
                   group, ++order, Width.SHORT, "Ignore Key mode")
+          .define(VERSION_FIELD_CONFIG, Type.STRING, "", Importance.HIGH,
+                  "Document version field. used for optimistic concurrency control. It's very useful, with it we don't need to ensure message delivery order. And client has more flexibility, kafka topic can have more than one partition, so we have more concurrency. as only the latest version will be used if the index operations are out of order for whatever reason. If not set, default use kafka offset as version.",
+                  group, ++order, Width.MEDIUM, "Document version field")
+          .define(VERSION_TYPE_CONFIG, Type.STRING, "external", Importance.HIGH,
+                  "Document version type. Mostly use \"external\". Sometimes \"external_gte\" is also useful, but should be used with care. If used incorrectly, it can result in loss of data.",
+                  group, ++order, Width.MEDIUM, "Document version field")
           .define(SCHEMA_IGNORE_CONFIG, Type.BOOLEAN, false, Importance.LOW,
                   "Whether to ignore schemas during indexing. "
                   + "When this is set to ``true``, the record schema will be ignored for the purpose of registering an Elasticsearch mapping. "

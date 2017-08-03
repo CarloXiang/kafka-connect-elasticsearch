@@ -18,7 +18,11 @@ package io.confluent.connect.elasticsearch;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-
+import io.searchbox.client.JestClientFactory;
+import io.searchbox.client.config.HttpClientConfig;
+import io.searchbox.client.http.JestHttpClient;
+import io.searchbox.core.Search;
+import io.searchbox.core.SearchResult;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
@@ -35,12 +39,6 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-
-import io.searchbox.client.JestClientFactory;
-import io.searchbox.client.config.HttpClientConfig;
-import io.searchbox.client.http.JestHttpClient;
-import io.searchbox.core.Search;
-import io.searchbox.core.SearchResult;
 
 public class ElasticsearchSinkTestBase extends ESIntegTestCase {
 
@@ -129,7 +127,7 @@ public class ElasticsearchSinkTestBase extends ESIntegTestCase {
     }
 
     for (SinkRecord record : records) {
-      final IndexableRecord indexableRecord = DataConverter.convertRecord(record, index, TYPE, ignoreKey, ignoreSchema);
+      final IndexableRecord indexableRecord = DataConverter.convertRecord(record, index, TYPE, ignoreKey, ignoreSchema, null, "external");
       assertEquals(indexableRecord.payload, hits.get(indexableRecord.key.id));
     }
   }

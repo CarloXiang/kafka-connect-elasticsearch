@@ -1,12 +1,12 @@
 /**
  * Copyright 2016 Confluent Inc.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
  * the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
@@ -46,26 +46,30 @@ public class ElasticsearchWriter {
   private final boolean ignoreSchema;
   private final Set<String> ignoreSchemaTopics;
   private final Map<String, String> topicToIndexMap;
+  private final String versionField;
+  private final String versionType;
   private final long flushTimeoutMs;
   private final BulkProcessor<IndexableRecord, ?> bulkProcessor;
 
   private final Set<String> existingMappings;
 
   ElasticsearchWriter(
-      JestClient client,
-      String type,
-      boolean ignoreKey,
-      Set<String> ignoreKeyTopics,
-      boolean ignoreSchema,
-      Set<String> ignoreSchemaTopics,
-      Map<String, String> topicToIndexMap,
-      long flushTimeoutMs,
-      int maxBufferedRecords,
-      int maxInFlightRequests,
-      int batchSize,
-      long lingerMs,
-      int maxRetries,
-      long retryBackoffMs
+          JestClient client,
+          String type,
+          boolean ignoreKey,
+          Set<String> ignoreKeyTopics,
+          boolean ignoreSchema,
+          Set<String> ignoreSchemaTopics,
+          Map<String, String> topicToIndexMap,
+          String versionField,
+          String versionType,
+          long flushTimeoutMs,
+          int maxBufferedRecords,
+          int maxInFlightRequests,
+          int batchSize,
+          long lingerMs,
+          int maxRetries,
+          long retryBackoffMs
   ) {
     this.client = client;
     this.type = type;
@@ -74,17 +78,19 @@ public class ElasticsearchWriter {
     this.ignoreSchema = ignoreSchema;
     this.ignoreSchemaTopics = ignoreSchemaTopics;
     this.topicToIndexMap = topicToIndexMap;
+    this.versionField = versionField;
+    this.versionType = versionType;
     this.flushTimeoutMs = flushTimeoutMs;
 
     bulkProcessor = new BulkProcessor<>(
-        new SystemTime(),
-        new BulkIndexingClient(client),
-        maxBufferedRecords,
-        maxInFlightRequests,
-        batchSize,
-        lingerMs,
-        maxRetries,
-        retryBackoffMs
+            new SystemTime(),
+            new BulkIndexingClient(client),
+            maxBufferedRecords,
+            maxInFlightRequests,
+            batchSize,
+            lingerMs,
+            maxRetries,
+            retryBackoffMs
     );
 
     existingMappings = new HashSet<>();
@@ -98,6 +104,9 @@ public class ElasticsearchWriter {
     private boolean ignoreSchema = false;
     private Set<String> ignoreSchemaTopics = Collections.emptySet();
     private Map<String, String> topicToIndexMap = new HashMap<>();
+    private String versionField;
+    private String versionType;
+
     private long flushTimeoutMs;
     private int maxBufferedRecords;
     private int maxInFlightRequests;
@@ -129,6 +138,16 @@ public class ElasticsearchWriter {
 
     public Builder setTopicToIndexMap(Map<String, String> topicToIndexMap) {
       this.topicToIndexMap = topicToIndexMap;
+      return this;
+    }
+
+    public Builder setVersionField(String versionField) {
+      this.versionField = versionField;
+      return this;
+    }
+
+    public Builder setVersionType(String versionType) {
+      this.versionType = versionType;
       return this;
     }
 
@@ -169,20 +188,22 @@ public class ElasticsearchWriter {
 
     public ElasticsearchWriter build() {
       return new ElasticsearchWriter(
-          client,
-          type,
-          ignoreKey,
-          ignoreKeyTopics,
-          ignoreSchema,
-          ignoreSchemaTopics,
-          topicToIndexMap,
-          flushTimeoutMs,
-          maxBufferedRecords,
-          maxInFlightRequests,
-          batchSize,
-          lingerMs,
-          maxRetry,
-          retryBackoffMs
+              client,
+              type,
+              ignoreKey,
+              ignoreKeyTopics,
+              ignoreSchema,
+              ignoreSchemaTopics,
+              topicToIndexMap,
+              versionField,
+              versionType,
+              flushTimeoutMs,
+              maxBufferedRecords,
+              maxInFlightRequests,
+              batchSize,
+              lingerMs,
+              maxRetry,
+              retryBackoffMs
       );
     }
   }
@@ -206,7 +227,7 @@ public class ElasticsearchWriter {
         existingMappings.add(index);
       }
 
-      final IndexableRecord indexableRecord = DataConverter.convertRecord(sinkRecord, index, type, ignoreKey, ignoreSchema);
+      final IndexableRecord indexableRecord = DataConverter.convertRecord(sinkRecord, index, type, ignoreKey, ignoreSchema, versionField, versionType);
 
       bulkProcessor.add(indexableRecord, flushTimeoutMs);
     }
@@ -244,13 +265,14 @@ public class ElasticsearchWriter {
   public void createIndicesForTopics(Set<String> assignedTopics) {
     for (String index : indicesForTopics(assignedTopics)) {
       if (!indexExists(index)) {
-        log.info("try to create index: " + index);
         CreateIndex createIndex = new CreateIndex.Builder(index).build();
         try {
           JestResult result = client.execute(createIndex);
           if (!result.isSucceeded()) {
             log.error("failed to create index[" + index + "]");
             throw new ConnectException("Could not create index:" + index);
+          } else {
+            log.info("created index[" + index + "] successfully");
           }
         } catch (IOException e) {
           throw new ConnectException(e);

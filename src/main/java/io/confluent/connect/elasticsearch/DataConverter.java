@@ -1,12 +1,12 @@
 /**
  * Copyright 2016 Confluent Inc.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
  * the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
@@ -16,6 +16,11 @@
 
 package io.confluent.connect.elasticsearch;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.connect.data.ConnectSchema;
 import org.apache.kafka.connect.data.Date;
 import org.apache.kafka.connect.data.Decimal;
@@ -44,6 +49,8 @@ import static io.confluent.connect.elasticsearch.ElasticsearchSinkConnectorConst
 public class DataConverter {
 
   private static final Converter JSON_CONVERTER;
+  private static final Gson GSON = new Gson();
+
   static {
     JSON_CONVERTER = new JsonConverter();
     JSON_CONVERTER.configure(Collections.singletonMap("schemas.enable", "false"), false);
@@ -76,7 +83,7 @@ public class DataConverter {
     }
   }
 
-  public static IndexableRecord convertRecord(SinkRecord record, String index, String type, boolean ignoreKey, boolean ignoreSchema) {
+  public static IndexableRecord convertRecord(SinkRecord record, String index, String type, boolean ignoreKey, boolean ignoreSchema, String versionField, String versionType) {
     final String id;
     if (ignoreKey) {
       id = record.topic() + "+" + String.valueOf((int) record.kafkaPartition()) + "+" + String.valueOf(record.kafkaOffset());
@@ -95,8 +102,53 @@ public class DataConverter {
     }
 
     final String payload = new String(JSON_CONVERTER.fromConnectData(record.topic(), schema, value), StandardCharsets.UTF_8);
-    final Long version = ignoreKey ? null : record.kafkaOffset();
-    return new IndexableRecord(new Key(index, type, id), payload, version);
+
+    final Long version = getVersion(payload, versionField, ignoreKey, record.kafkaOffset());
+
+    return new IndexableRecord(new Key(index, type, id), payload, version, versionType);
+  }
+
+  static Long getVersion(String payload, String versionField, boolean ignoreKey, long offset) {
+    if (ignoreKey) return null;
+    if (StringUtils.isBlank(versionField)) return offset;
+    if (StringUtils.isBlank(payload)) return null;
+
+    JsonObject jsonObject;
+    try {
+      jsonObject = GSON.fromJson(payload, JsonObject.class);
+    } catch (JsonSyntaxException e) {
+      throw new ConnectException("The document content is not a valid json, document:" + payload, e);
+    }
+
+    String[] paths = versionField.split("\\.");
+    JsonElement jsonElement = null;
+    for (int i = 0, pathsLength = paths.length; i < pathsLength; i++) {
+      String path = paths[i];
+      jsonElement = jsonObject.get(path);
+
+      if (jsonElement == null) // payload doesn't contain version field
+        return null;
+
+      if (i != pathsLength - 1) {
+        if (!jsonElement.isJsonObject())
+          return null;
+        jsonObject = (JsonObject) jsonElement;
+      }
+
+    }
+
+    if (jsonElement == null) { // payload doesn't contain version
+      return null;
+    } else {
+      if (!jsonElement.isJsonPrimitive()) {
+        return null; // specified field is not a eligible version field
+      }
+      try {
+        return jsonElement.getAsLong();
+      } catch (NumberFormatException e) {
+        return null; // can't parse string to long, fallback to not use version control
+      }
+    }
   }
 
   // We need to pre process the Kafka Connect schema before converting to JSON as Elasticsearch
@@ -131,9 +183,9 @@ public class DataConverter {
         String keyName = keySchema.name() == null ? keySchema.type().name() : keySchema.name();
         String valueName = valueSchema.name() == null ? valueSchema.type().name() : valueSchema.name();
         Schema elementSchema = SchemaBuilder.struct().name(keyName + "-" + valueName)
-            .field(MAP_KEY, preProcessSchema(keySchema))
-            .field(MAP_VALUE, preProcessSchema(valueSchema))
-            .build();
+                .field(MAP_KEY, preProcessSchema(keySchema))
+                .field(MAP_VALUE, preProcessSchema(valueSchema))
+                .build();
         return copySchemaBasics(schema, SchemaBuilder.array(elementSchema)).build();
       }
       case STRUCT: {
@@ -195,7 +247,7 @@ public class DataConverter {
       case ARRAY:
         Collection collection = (Collection) value;
         ArrayList<Object> result = new ArrayList<>();
-        for (Object element: collection) {
+        for (Object element : collection) {
           result.add(preProcessValue(element, schema.valueSchema(), newSchema.valueSchema()));
         }
         return result;
@@ -205,7 +257,7 @@ public class DataConverter {
         ArrayList<Struct> mapStructs = new ArrayList<>();
         Map<?, ?> map = (Map<?, ?>) value;
         Schema newValueSchema = newSchema.valueSchema();
-        for (Map.Entry<?, ?> entry: map.entrySet()) {
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
           Struct mapStruct = new Struct(newValueSchema);
           mapStruct.put(MAP_KEY, preProcessValue(entry.getKey(), keySchema, newValueSchema.field(MAP_KEY).schema()));
           mapStruct.put(MAP_VALUE, preProcessValue(entry.getValue(), valueSchema, newValueSchema.field(MAP_VALUE).schema()));
@@ -216,7 +268,7 @@ public class DataConverter {
         Struct struct = (Struct) value;
         Struct newStruct = new Struct(newSchema);
         for (Field field : schema.fields()) {
-          Object converted =  preProcessValue(struct.get(field), field.schema(), newSchema.field(field.name()).schema());
+          Object converted = preProcessValue(struct.get(field), field.schema(), newSchema.field(field.name()).schema());
           newStruct.put(field.name(), converted);
         }
         return newStruct;

@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 public class DataConverterTest {
 
@@ -176,6 +177,39 @@ public class DataConverterTest {
         SchemaBuilder.struct().name("struct").field("decimal", Schema.FLOAT64_SCHEMA).optional().build(),
         DataConverter.preProcessSchema(SchemaBuilder.struct().name("struct").field("decimal", Decimal.schema(2)).optional().build())
     );
+  }
+
+  @Test
+  public void getVersion() {
+    String payload =
+            "{\n" +
+            "  \"version\": 1,\n" +
+            "  \"name\": \"Bar\",\n" +
+            "  \"age\": 25\n" +
+            "}";
+    assertEquals(DataConverter.getVersion(payload, "version", false, 10).longValue(), 1L);
+
+    //language=JSON
+    String payload2 =
+            "{\n" +
+            "  \"name\": \"Bar\",\n" +
+            "  \"age\": 25,\n" +
+            "  \"foo\": {\n" +
+            "    \"version\": 1\n" +
+            "  }\n" +
+            "}";
+    assertEquals(DataConverter.getVersion(payload2, "foo.version", false, 10).longValue(), 1L);
+
+    //language=JSON
+    String payload3 =
+            "{\n" +
+            "  \"name\": \"Bar\",\n" +
+            "  \"age\": 25,\n" +
+            "  \"foo\": {\n" +
+            "    \"version\": \"wrong version value\"\n" +
+            "  }\n" +
+            "}";
+    assertNull(DataConverter.getVersion(payload3, "foo.version", false, 10));
   }
 
 }

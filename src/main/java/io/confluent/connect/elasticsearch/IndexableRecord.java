@@ -1,12 +1,12 @@
 /**
  * Copyright 2016 Confluent Inc.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
  * the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
@@ -23,20 +23,22 @@ public class IndexableRecord {
   public final Key key;
   public final String payload;
   public final Long version;
+  public final String versionType;
 
-  public IndexableRecord(Key key, String payload, Long version) {
+  public IndexableRecord(Key key, String payload, Long version, String versionType) {
     this.key = key;
     this.version = version;
     this.payload = payload;
+    this.versionType = versionType;
   }
 
   public Index toIndexRequest() {
     Index.Builder req = new Index.Builder(payload)
-        .index(key.index)
-        .type(key.type)
-        .id(key.id);
+            .index(key.index)
+            .type(key.type)
+            .id(key.id);
     if (version != null) {
-      req.setParameter("version_type", "external").setParameter("version", version);
+      req.setParameter("version_type", versionType).setParameter("version", version);
     }
     return req.build();
   }
