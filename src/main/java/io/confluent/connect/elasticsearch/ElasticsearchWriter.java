@@ -16,6 +16,12 @@
 
 package io.confluent.connect.elasticsearch;
 
+import io.confluent.connect.elasticsearch.bulk.BulkProcessor;
+import io.searchbox.action.Action;
+import io.searchbox.client.JestClient;
+import io.searchbox.client.JestResult;
+import io.searchbox.indices.CreateIndex;
+import io.searchbox.indices.IndicesExists;
 import org.apache.kafka.common.utils.SystemTime;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -30,13 +36,6 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import io.confluent.connect.elasticsearch.bulk.BulkProcessor;
-import io.searchbox.action.Action;
-import io.searchbox.client.JestClient;
-import io.searchbox.client.JestResult;
-import io.searchbox.indices.CreateIndex;
-import io.searchbox.indices.IndicesExists;
-
 public class ElasticsearchWriter {
   private static final Logger log = LoggerFactory.getLogger(ElasticsearchWriter.class);
 
@@ -47,26 +46,30 @@ public class ElasticsearchWriter {
   private final boolean ignoreSchema;
   private final Set<String> ignoreSchemaTopics;
   private final Map<String, String> topicToIndexMap;
+  private final String versionField;
+  private final String versionType;
   private final long flushTimeoutMs;
   private final BulkProcessor<IndexableRecord, ?> bulkProcessor;
 
   private final Set<String> existingMappings;
 
   ElasticsearchWriter(
-      JestClient client,
-      String type,
-      boolean ignoreKey,
-      Set<String> ignoreKeyTopics,
-      boolean ignoreSchema,
-      Set<String> ignoreSchemaTopics,
-      Map<String, String> topicToIndexMap,
-      long flushTimeoutMs,
-      int maxBufferedRecords,
-      int maxInFlightRequests,
-      int batchSize,
-      long lingerMs,
-      int maxRetries,
-      long retryBackoffMs
+          JestClient client,
+          String type,
+          boolean ignoreKey,
+          Set<String> ignoreKeyTopics,
+          boolean ignoreSchema,
+          Set<String> ignoreSchemaTopics,
+          Map<String, String> topicToIndexMap,
+          String versionField,
+          String versionType,
+          long flushTimeoutMs,
+          int maxBufferedRecords,
+          int maxInFlightRequests,
+          int batchSize,
+          long lingerMs,
+          int maxRetries,
+          long retryBackoffMs
   ) {
     this.client = client;
     this.type = type;
@@ -75,17 +78,19 @@ public class ElasticsearchWriter {
     this.ignoreSchema = ignoreSchema;
     this.ignoreSchemaTopics = ignoreSchemaTopics;
     this.topicToIndexMap = topicToIndexMap;
+    this.versionField = versionField;
+    this.versionType = versionType;
     this.flushTimeoutMs = flushTimeoutMs;
 
     bulkProcessor = new BulkProcessor<>(
-        new SystemTime(),
-        new BulkIndexingClient(client),
-        maxBufferedRecords,
-        maxInFlightRequests,
-        batchSize,
-        lingerMs,
-        maxRetries,
-        retryBackoffMs
+            new SystemTime(),
+            new BulkIndexingClient(client),
+            maxBufferedRecords,
+            maxInFlightRequests,
+            batchSize,
+            lingerMs,
+            maxRetries,
+            retryBackoffMs
     );
 
     existingMappings = new HashSet<>();
@@ -99,6 +104,9 @@ public class ElasticsearchWriter {
     private boolean ignoreSchema = false;
     private Set<String> ignoreSchemaTopics = Collections.emptySet();
     private Map<String, String> topicToIndexMap = new HashMap<>();
+    private String versionField;
+    private String versionType;
+
     private long flushTimeoutMs;
     private int maxBufferedRecords;
     private int maxInFlightRequests;
@@ -130,6 +138,16 @@ public class ElasticsearchWriter {
 
     public Builder setTopicToIndexMap(Map<String, String> topicToIndexMap) {
       this.topicToIndexMap = topicToIndexMap;
+      return this;
+    }
+
+    public Builder setVersionField(String versionField) {
+      this.versionField = versionField;
+      return this;
+    }
+
+    public Builder setVersionType(String versionType) {
+      this.versionType = versionType;
       return this;
     }
 
@@ -170,20 +188,22 @@ public class ElasticsearchWriter {
 
     public ElasticsearchWriter build() {
       return new ElasticsearchWriter(
-          client,
-          type,
-          ignoreKey,
-          ignoreKeyTopics,
-          ignoreSchema,
-          ignoreSchemaTopics,
-          topicToIndexMap,
-          flushTimeoutMs,
-          maxBufferedRecords,
-          maxInFlightRequests,
-          batchSize,
-          lingerMs,
-          maxRetry,
-          retryBackoffMs
+              client,
+              type,
+              ignoreKey,
+              ignoreKeyTopics,
+              ignoreSchema,
+              ignoreSchemaTopics,
+              topicToIndexMap,
+              versionField,
+              versionType,
+              flushTimeoutMs,
+              maxBufferedRecords,
+              maxInFlightRequests,
+              batchSize,
+              lingerMs,
+              maxRetry,
+              retryBackoffMs
       );
     }
   }
@@ -193,8 +213,7 @@ public class ElasticsearchWriter {
       final String indexOverride = topicToIndexMap.get(sinkRecord.topic());
       final String index = indexOverride != null ? indexOverride : sinkRecord.topic();
       final boolean ignoreKey = ignoreKeyTopics.contains(sinkRecord.topic()) || this.ignoreKey;
-      final boolean ignoreSchema =
-          ignoreSchemaTopics.contains(sinkRecord.topic()) || this.ignoreSchema;
+      final boolean ignoreSchema = ignoreSchemaTopics.contains(sinkRecord.topic()) || this.ignoreSchema;
 
       if (!ignoreSchema && !existingMappings.contains(index)) {
         try {
@@ -202,20 +221,13 @@ public class ElasticsearchWriter {
             Mapping.createMapping(client, index, type, sinkRecord.valueSchema());
           }
         } catch (IOException e) {
-          // FIXME: concurrent tasks could attempt to create the mapping and one of the requests may
-          // fail
+          // FIXME: concurrent tasks could attempt to create the mapping and one of the requests may fail
           throw new ConnectException("Failed to initialize mapping for index: " + index, e);
         }
         existingMappings.add(index);
       }
 
-      final IndexableRecord indexableRecord = DataConverter.convertRecord(
-          sinkRecord,
-          index,
-          type,
-          ignoreKey,
-          ignoreSchema
-      );
+      final IndexableRecord indexableRecord = DataConverter.convertRecord(sinkRecord, index, type, ignoreKey, ignoreSchema, versionField, versionType);
 
       bulkProcessor.add(indexableRecord, flushTimeoutMs);
     }
@@ -240,6 +252,7 @@ public class ElasticsearchWriter {
   }
 
   private boolean indexExists(String index) {
+    log.info("check index exists for index[" + index + "]");
     Action action = new IndicesExists.Builder(index).build();
     try {
       JestResult result = client.execute(action);
@@ -256,7 +269,10 @@ public class ElasticsearchWriter {
         try {
           JestResult result = client.execute(createIndex);
           if (!result.isSucceeded()) {
+            log.error("failed to create index[" + index + "]");
             throw new ConnectException("Could not create index:" + index);
+          } else {
+            log.info("created index[" + index + "] successfully");
           }
         } catch (IOException e) {
           throw new ConnectException(e);

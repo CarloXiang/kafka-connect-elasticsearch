@@ -23,20 +23,22 @@ public class IndexableRecord {
   public final Key key;
   public final String payload;
   public final Long version;
+  public final String versionType;
 
-  public IndexableRecord(Key key, String payload, Long version) {
+  public IndexableRecord(Key key, String payload, Long version, String versionType) {
     this.key = key;
     this.version = version;
     this.payload = payload;
+    this.versionType = versionType;
   }
 
   public Index toIndexRequest() {
     Index.Builder req = new Index.Builder(payload)
-        .index(key.index)
-        .type(key.type)
-        .id(key.id);
+            .index(key.index)
+            .type(key.type)
+            .id(key.id);
     if (version != null) {
-      req.setParameter("version_type", "external").setParameter("version", version);
+      req.setParameter("version_type", versionType).setParameter("version", version);
     }
     return req.build();
   }

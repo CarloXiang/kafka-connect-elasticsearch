@@ -16,6 +16,11 @@
 
 package io.confluent.connect.elasticsearch;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.connect.data.ConnectSchema;
 import org.apache.kafka.connect.data.Date;
 import org.apache.kafka.connect.data.Decimal;
@@ -46,6 +51,7 @@ import static io.confluent.connect.elasticsearch.ElasticsearchSinkConnectorConst
 public class DataConverter {
 
   private static final Converter JSON_CONVERTER;
+  private static final Gson GSON = new Gson();
 
   static {
     JSON_CONVERTER = new JsonConverter();
@@ -83,18 +89,10 @@ public class DataConverter {
     }
   }
 
-  public static IndexableRecord convertRecord(
-      SinkRecord record,
-      String index,
-      String type,
-      boolean ignoreKey,
-      boolean ignoreSchema
-  ) {
+  public static IndexableRecord convertRecord(SinkRecord record, String index, String type, boolean ignoreKey, boolean ignoreSchema, String versionField, String versionType) {
     final String id;
     if (ignoreKey) {
-      id = record.topic()
-           + "+" + String.valueOf((int) record.kafkaPartition())
-           + "+" + String.valueOf(record.kafkaOffset());
+      id = record.topic() + "+" + String.valueOf((int) record.kafkaPartition()) + "+" + String.valueOf(record.kafkaOffset());
     } else {
       id = DataConverter.convertKey(record.keySchema(), record.key());
     }
@@ -109,10 +107,54 @@ public class DataConverter {
       value = record.value();
     }
 
-    byte[] rawJsonPayload = JSON_CONVERTER.fromConnectData(record.topic(), schema, value);
-    final String payload = new String(rawJsonPayload, StandardCharsets.UTF_8);
-    final Long version = ignoreKey ? null : record.kafkaOffset();
-    return new IndexableRecord(new Key(index, type, id), payload, version);
+    final String payload = new String(JSON_CONVERTER.fromConnectData(record.topic(), schema, value), StandardCharsets.UTF_8);
+
+    final Long version = getVersion(payload, versionField, ignoreKey, record.kafkaOffset());
+
+    return new IndexableRecord(new Key(index, type, id), payload, version, versionType);
+  }
+
+  static Long getVersion(String payload, String versionField, boolean ignoreKey, long offset) {
+    if (ignoreKey) return null;
+    if (StringUtils.isBlank(versionField)) return offset;
+    if (StringUtils.isBlank(payload)) return null;
+
+    JsonObject jsonObject;
+    try {
+      jsonObject = GSON.fromJson(payload, JsonObject.class);
+    } catch (JsonSyntaxException e) {
+      throw new ConnectException("The document content is not a valid json, document:" + payload, e);
+    }
+
+    String[] paths = versionField.split("\\.");
+    JsonElement jsonElement = null;
+    for (int i = 0, pathsLength = paths.length; i < pathsLength; i++) {
+      String path = paths[i];
+      jsonElement = jsonObject.get(path);
+
+      if (jsonElement == null) // payload doesn't contain version field
+        return null;
+
+      if (i != pathsLength - 1) {
+        if (!jsonElement.isJsonObject())
+          return null;
+        jsonObject = (JsonObject) jsonElement;
+      }
+
+    }
+
+    if (jsonElement == null) { // payload doesn't contain version
+      return null;
+    } else {
+      if (!jsonElement.isJsonPrimitive()) {
+        return null; // specified field is not a eligible version field
+      }
+      try {
+        return jsonElement.getAsLong();
+      } catch (NumberFormatException e) {
+        return null; // can't parse string to long, fallback to not use version control
+      }
+    }
   }
 
   // We need to pre process the Kafka Connect schema before converting to JSON as Elasticsearch
@@ -196,7 +238,6 @@ public class DataConverter {
 
   // visible for testing
   static Object preProcessValue(Object value, Schema schema, Schema newSchema) {
-    // Handle missing schemas and acceptable null values
     if (schema == null) {
       return value;
     }
