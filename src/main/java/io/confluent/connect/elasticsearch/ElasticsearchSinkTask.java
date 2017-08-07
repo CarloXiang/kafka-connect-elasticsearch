@@ -110,11 +110,11 @@ public class ElasticsearchSinkTask extends SinkTask {
   @Override
   public void open(Collection<TopicPartition> partitions) {
     log.debug("Opening the task for topic partitions: {}", partitions);
-    Set<String> topics = new HashSet<>();
-    for (TopicPartition tp : partitions) {
-      topics.add(tp.topic());
-    }
-    writer.createIndicesForTopics(topics);
+    // Set<String> topics = new HashSet<>();
+    // for (TopicPartition tp : partitions) {
+    //   topics.add(tp.topic());
+    // }
+    // writer.createIndicesForTopics(topics);
   }
 
   @Override
